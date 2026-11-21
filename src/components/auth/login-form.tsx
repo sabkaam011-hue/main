@@ -1,0 +1,189 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Loader2, Mail, Smartphone } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
+import { Button } from "@/components/ui/button";
+import { Input, Label, FieldHint } from "@/components/ui/input";
+import { Card, CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+
+type Method = "phone" | "email";
+
+export function LoginForm({ next, methods }: { next: string; methods: { phone: boolean; email: boolean; google: boolean } }) {
+  const router = useRouter();
+  const supabase = createClient();
+  const [method, setMethod] = useState<Method>(methods.phone ? "phone" : "email");
+  const [step, setStep] = useState<"identify" | "verify">("identify");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [otp, setOtp] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [cooldown, setCooldown] = useState(0);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const id = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(id);
+  }, [cooldown]);
+
+  const fullPhone = `+91${phone.replace(/\D/g, "").slice(-10)}`;
+  const validPhone = /^[6-9]\d{9}$/.test(phone.replace(/\D/g, "").slice(-10));
+  const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+  async function sendOtp() {
+    setError(null);
+    setLoading(true);
+    const { error } =
+      method === "phone"
+        ? await supabase.auth.signInWithOtp({ phone: fullPhone })
+        : await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+    setLoading(false);
+    if (error) return setError(error.message);
+    setStep("verify");
+    setCooldown(30);
+  }
+
+  async function verify() {
+    setError(null);
+    setLoading(true);
+    const { error } =
+      method === "phone"
+        ? await supabase.auth.verifyOtp({ phone: fullPhone, token: otp, type: "sms" })
+        : await supabase.auth.verifyOtp({ email, token: otp, type: "email" });
+    setLoading(false);
+    if (error) return setError(error.message);
+    router.replace(next);
+    router.refresh();
+  }
+
+  async function google() {
+    setError(null);
+    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
+    const { error } = await supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo } });
+    if (error) setError(error.message);
+  }
+
+  return (
+    <Card>
+      <CardContent className="p-6 sm:p-6">
+        {methods.phone && methods.email && step === "identify" && (
+          <div className="mb-5 grid grid-cols-2 gap-1 rounded-xl bg-canvas p-1" role="tablist" aria-label="Login method">
+            {(["phone", "email"] as Method[]).map((m) => (
+              <button
+                key={m}
+                role="tab"
+                type="button"
+                aria-selected={method === m}
+                onClick={() => {
+                  setMethod(m);
+                  setError(null);
+                }}
+                className={cn(
+                  "flex cursor-pointer items-center justify-center gap-2 rounded-lg py-2 text-sm font-semibold transition-colors",
+                  method === m ? "bg-white text-navy shadow-sm" : "text-muted hover:text-ink",
+                )}
+              >
+                {m === "phone" ? <Smartphone className="h-4 w-4" /> : <Mail className="h-4 w-4" />}
+                {m === "phone" ? "Mobile OTP" : "Email OTP"}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (step === "identify") void sendOtp();
+            else void verify();
+          }}
+          className="space-y-4"
+          noValidate
+        >
+          {step === "identify" ? (
+            method === "phone" ? (
+              <div>
+                <Label htmlFor="phone">Mobile number</Label>
+                <div className="flex">
+                  <span className="inline-flex items-center rounded-l-xl border border-r-0 border-line bg-canvas px-3 text-sm text-muted">+91</span>
+                  <Input
+                    id="phone"
+                    inputMode="numeric"
+                    autoComplete="tel-national"
+                    placeholder="98765 43210"
+                    maxLength={11}
+                    className="rounded-l-none"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value.replace(/[^\d ]/g, ""))}
+                    required
+                  />
+                </div>
+                <FieldHint>We&apos;ll send a one-time password by SMS.</FieldHint>
+              </div>
+            ) : (
+              <div>
+                <Label htmlFor="email">Email address</Label>
+                <Input id="email" type="email" autoComplete="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value.trim())} required />
+                <FieldHint>We&apos;ll email you a one-time code.</FieldHint>
+              </div>
+            )
+          ) : (
+            <div>
+              <Label htmlFor="otp">Enter the code sent to {method === "phone" ? fullPhone : email}</Label>
+              <Input
+                id="otp"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="6-digit code"
+                maxLength={8}
+                value={otp}
+                onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+                autoFocus
+                className="text-center text-lg tracking-[0.4em]"
+              />
+              <div className="mt-2 flex items-center justify-between text-xs">
+                <button type="button" className="cursor-pointer font-semibold text-muted hover:text-ink" onClick={() => { setStep("identify"); setOtp(""); }}>
+                  ← Change {method === "phone" ? "number" : "email"}
+                </button>
+                <button type="button" disabled={cooldown > 0 || loading} className="cursor-pointer font-semibold text-teal disabled:cursor-default disabled:text-muted" onClick={() => void sendOtp()}>
+                  {cooldown > 0 ? `Resend in ${cooldown}s` : "Resend code"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {error && <p role="alert" className="rounded-lg bg-danger-50 px-3 py-2 text-sm text-danger">{error}</p>}
+
+          <Button
+            type="submit"
+            size="lg"
+            className="w-full"
+            disabled={loading || (step === "identify" ? (method === "phone" ? !validPhone : !validEmail) : otp.length < 6)}
+          >
+            {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+            {step === "identify" ? "Send OTP" : "Verify & continue"}
+          </Button>
+        </form>
+
+        {methods.google && step === "identify" && (
+          <>
+            <div className="my-5 flex items-center gap-3 text-xs text-muted">
+              <span className="h-px flex-1 bg-line" /> or <span className="h-px flex-1 bg-line" />
+            </div>
+            <Button variant="outline" size="lg" className="w-full" onClick={() => void google()}>
+              <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" aria-hidden>
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.76h3.56c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.56-2.76c-.98.66-2.23 1.06-3.72 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z" />
+                <path fill="#FBBC05" d="M5.84 14.11A6.6 6.6 0 0 1 5.5 12c0-.73.13-1.44.34-2.11V7.05H2.18a11 11 0 0 0 0 9.9l3.66-2.84z" />
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.18 7.05l3.66 2.84C6.71 7.31 9.14 5.38 12 5.38z" />
+              </svg>
+              Continue with Google
+            </Button>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
