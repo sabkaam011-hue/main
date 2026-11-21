@@ -7,6 +7,7 @@ import { Footer } from "@/components/layout/footer";
 import { getI18n } from "@/lib/i18n/server";
 import { I18nProvider } from "@/lib/i18n/client";
 import { siteUrl } from "@/lib/utils";
+import WhatsAppFloat from "@/components/whatsapp-float";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl()),
@@ -42,8 +43,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             {children}
           </main>
           <Footer />
+        <WhatsAppFloat />
         </I18nProvider>
       </body>
     </html>
   );
 }
+
